@@ -54,11 +54,37 @@
                                                       (:temperature . nil)
                                                       (:preflight . nil)))
 
+(defun ob-chatgpt-shell-capture-org-neighborhood (char-limit)
+  "Capture the text from the org-mode tree up to CHAR-LIMIT characters."
+  (interactive "nCharacter limit: ")
+  (save-excursion
+    (let ((context "")
+          (total-chars 0))
+      ;; Capture the current heading and its contents
+      (org-back-to-heading t)
+      (setq context (buffer-substring-no-properties (point) (org-end-of-subtree)))
+      (setq total-chars (length context))
+
+      ;; Gather text from the upper levels until the character limit is reached
+      (while (and (< total-chars char-limit) (org-up-heading-safe))
+        (let* ((element (org-element-at-point))
+               (element-start (org-element-property :begin element))
+               (element-end (org-element-property :end element))
+               (element-text (buffer-substring-no-properties element-start element-end)))
+          (setq context (concat element-text "\n" context))
+          (setq total-chars (+ total-chars (length element-text)))))
+
+      ;; Check if we need to trim the collected text to fit the character limit
+      (if (> total-chars char-limit)
+          (setq context (substring context (- total-chars char-limit))))
+      context)))
+
 (defun org-babel-execute:chatgpt-shell (body params)
   "Execute a block of ChatGPT prompt in BODY with org-babel header PARAMS.
 This function is called by `org-babel-execute-src-block'"
   (message "executing ChatGPT source code block")
-  (let* ((context
+  (let* ((neighborhood (ob-chatgpt-shell-capture-org-neighborhood (- 128000 (length body))))
+         (context
           (when-let ((context-name (map-elt params :context)))
             (if (string-equal context-name "t")
                 ;; If the context is `t' then collect all previous contexts
@@ -73,6 +99,8 @@ This function is called by `org-babel-execute-src-block'"
               `(((role . "system")
                  (content . ,(map-elt params :system)))))
             context
+            `(((role . "system")
+               (content . ,(concat "Here is the context from which you were called:\n```org\n" neighborhood "```"))))
             `(((role . "user")
                (content . ,body)))))))
     (if (map-elt params :preflight)
